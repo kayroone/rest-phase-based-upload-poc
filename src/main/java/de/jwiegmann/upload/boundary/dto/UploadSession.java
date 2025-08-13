@@ -4,12 +4,16 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Data
 @RequiredArgsConstructor
 @Builder
-public class Batch {
+public class UploadSession {
 
     private final String uploadId;
-    private final String batchId;
-    private final String payload;
+    private UploadSessionStatus status;
+    private final LocalDateTime createdAt;
+    private final LocalDateTime expiresAt;
+
 }

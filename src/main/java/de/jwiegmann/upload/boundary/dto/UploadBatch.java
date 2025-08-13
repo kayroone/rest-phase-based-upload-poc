@@ -1,4 +1,4 @@
-package de.jwiegmann.upload.entity;
+package de.jwiegmann.upload.boundary.dto;
 
 import lombok.Builder;
 import lombok.Data;
@@ -9,15 +9,13 @@ import java.time.LocalDateTime;
 @Data
 @RequiredArgsConstructor
 @Builder
-public class Batch {
+public class UploadBatch {
 
     private final String uploadId;
     private final String batchId;
     private final String payload;
-    private Status status;
+    private UploadBatchStatus status;
     private String errorMessage;
     private final LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-
-    public enum Status {PENDING, PROCESSING, DONE, ERROR}
 }
