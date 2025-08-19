@@ -1,21 +1,26 @@
 package de.jwiegmann.upload.boundary.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
 @Data
-@RequiredArgsConstructor
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class UploadBatch {
 
-    private final String uploadId;
-    private final String batchId;
-    private final String payload;
-    private UploadBatchStatus status;
+    private String uploadId;
+    private String batchId;
+    private String payload;
+
+    @Builder.Default
+    private UploadBatchStatus status = UploadBatchStatus.PENDING;
+
     private String errorMessage;
-    private final LocalDateTime createdAt;
+    private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

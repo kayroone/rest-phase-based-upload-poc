@@ -1,19 +1,24 @@
 package de.jwiegmann.upload.boundary.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
 @Data
-@RequiredArgsConstructor
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class UploadSession {
 
-    private final String uploadId;
-    private UploadSessionStatus status;
-    private final LocalDateTime createdAt;
-    private final LocalDateTime expiresAt;
+    private String uploadId;
+
+    @Builder.Default
+    private UploadSessionStatus status = UploadSessionStatus.ACTIVE;
+
+    private LocalDateTime createdAt;
+    private LocalDateTime expiresAt;
 
 }

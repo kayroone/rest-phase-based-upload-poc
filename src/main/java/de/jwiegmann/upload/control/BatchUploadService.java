@@ -1,9 +1,6 @@
 package de.jwiegmann.upload.control;
 
-import de.jwiegmann.upload.boundary.dto.UploadBatch;
-import de.jwiegmann.upload.boundary.dto.UploadBatchStatus;
-import de.jwiegmann.upload.boundary.dto.UploadSession;
-import de.jwiegmann.upload.boundary.dto.UploadSessionStatus;
+import de.jwiegmann.upload.boundary.dto.*;
 import de.jwiegmann.upload.control.repository.InMemoryUploadBatchRepository;
 import de.jwiegmann.upload.control.repository.InMemoryUploadSessionRepository;
 import org.springframework.http.HttpStatus;
@@ -12,7 +9,6 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -46,6 +42,7 @@ public class BatchUploadService {
     /**
      * Fügt der angegebenen Upload-Session einen neuen Batch hinzu.
      * Prüft auf Ablaufzeit, aktiven Status und Duplikate.
+     * Dient gleichzeitig als Inbox-Table.
      */
     public void addBatch(String uploadId, String batchId, String payload) {
 
@@ -63,12 +60,32 @@ public class BatchUploadService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "upload session is not open");
         }
 
-        // 2. Speichern der zu der Session gehörigen Batch
+        // 2. Re-Upload-Logik
+        var existingOpt = batchRepo.find(uploadId, batchId);
+        if (existingOpt.isPresent()) {
+            UploadBatch existing = existingOpt.get();
+            switch (existing.getStatus()) {
+                case ERROR -> {
+                    // Erneuter Upload zulassen: Payload ersetzen, Status zurück auf PENDING
+                    existing.setPayload(payload);
+                    existing.setStatus(UploadBatchStatus.PENDING);
+                    existing.setErrorMessage(null);
+                    existing.setUpdatedAt(LocalDateTime.now());
+                    return; // 200 OK
+                }
+                case PENDING, PROCESSING ->
+                        throw new ResponseStatusException(HttpStatus.CONFLICT, "upload batch is not finished yet");
+                case DONE -> throw new ResponseStatusException(HttpStatus.CONFLICT, "upload batch already processed");
+            }
+        }
+
+        // 3. Speichern der zu der Session gehörigen Batch
         LocalDateTime now = LocalDateTime.now();
         UploadBatch newBatch = UploadBatch.builder()
                 .uploadId(uploadId)
                 .batchId(batchId)
                 .payload(payload)
+                // PENDING da alle Batches dann von einem async Job abgearbeitet werden würden
                 .status(UploadBatchStatus.PENDING)
                 .createdAt(now)
                 .updatedAt(now)
@@ -82,11 +99,10 @@ public class BatchUploadService {
 
     /**
      * Schließt eine Upload-Session ab.
-     * Prüft Ablaufzeit und ob noch offene oder fehlerhafte Batches existieren.
+     * Prüft Ablaufzeit und Status der Session
      */
     public void completeUpload(String uploadId) {
 
-        // 1. Prüfen, ob es eine aktive Session zu der Batch gibt oder diese expired ist
         UploadSession session = sessionRepo.find(uploadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
 
@@ -95,44 +111,49 @@ public class BatchUploadService {
             sessionRepo.save(session);
             throw new ResponseStatusException(HttpStatus.GONE, "upload session expired");
         }
-
         if (session.getStatus() != UploadSessionStatus.ACTIVE) {
+            // idempotent erlauben: wenn schon SEALED, 200 zurückgeben
+            if (session.getStatus() == UploadSessionStatus.SEALED) return;
             throw new ResponseStatusException(HttpStatus.CONFLICT, "upload session is not open");
         }
 
-        // 2. Prüfen, ob es offene oder fehlerhafte Batches gab
-        List<UploadBatch> all = batchRepo.findAll(uploadId);
+        // Session schließen für neue Batches, Verarbeitung läuft async weiter
+        session.setStatus(UploadSessionStatus.SEALED);
+        sessionRepo.save(session);
+    }
 
-        List<String> failed = all.stream()
+    /**
+     * Zeigt den Progress/Metriken für einen initiierten Upload an.
+     *
+     * @param uploadId Die UploadId zu einer aktiven UploadSession.
+     * @return Die verschiedenen Status zu bereits hochgeladenen Batches.
+     */
+    public UploadStatusResponse getStatus(String uploadId) {
+
+        UploadSession session = sessionRepo.find(uploadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
+
+        var batches = batchRepo.findAll(uploadId);
+        int total = batches.size();
+        int done = (int) batches.stream().filter(b -> b.getStatus() == UploadBatchStatus.DONE).count();
+        int pending = (int) batches.stream().filter(b -> b.getStatus() == UploadBatchStatus.PENDING).count();
+        int processing = (int) batches.stream().filter(b -> b.getStatus() == UploadBatchStatus.PROCESSING).count();
+        int error = (int) batches.stream().filter(b -> b.getStatus() == UploadBatchStatus.ERROR).count();
+
+        var errors = batches.stream()
                 .filter(b -> b.getStatus() == UploadBatchStatus.ERROR)
                 .map(UploadBatch::getBatchId)
                 .toList();
 
-        boolean hasPendingOrProcessing = all.stream()
-                .anyMatch(b -> b.getStatus() == UploadBatchStatus.PENDING
-                        || b.getStatus() == UploadBatchStatus.PROCESSING
-                );
-
-        // Bei ERROR: Session abbrechen (ABORTED) und 400 melden
-        if (!failed.isEmpty()) {
-            session.setStatus(UploadSessionStatus.ABORTED);
-            sessionRepo.save(session);
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "abort session: some batches failed: " + failed
-            );
-        }
-
-        // Bei noch offenen Batches: (keinen Abort), aber 400 zurückgeben
-        if (hasPendingOrProcessing) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "cannot complete: pending or processing batches exist"
-            );
-        }
-
-        // 3. Keine Errors, nichts offen → Session schließen
-        session.setStatus(UploadSessionStatus.COMPLETED);
-        sessionRepo.save(session);
+        return UploadStatusResponse.builder()
+                .uploadId(uploadId)
+                .sessionStatus(session.getStatus().name())
+                .totalBatches(total)
+                .done(done)
+                .pending(pending)
+                .processing(processing)
+                .error(error)
+                .errorBatchIds(errors)
+                .build();
     }
 }

@@ -45,4 +45,9 @@ public class BatchRestController {
         service.completeUpload(uploadId);
         return ResponseEntity.ok().build();
     }
+
+    @GetMapping("/{uploadId}/status")
+    public ResponseEntity<?> status(@PathVariable String uploadId) {
+        return ResponseEntity.ok(service.getStatus(uploadId));
+    }
 }
