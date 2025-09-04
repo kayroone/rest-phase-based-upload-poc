@@ -97,15 +97,15 @@ Liefert den aktuellen Status der Upload-Session, inkl. Fortschritt, fehlender Se
 ```mermaid
 sequenceDiagram
 participant Client 
-participant Server (
+participant Server
 
-    Client  ->> Server (: 1. InitUpload (Metadaten, expectedCount)
-    Server ( -->> Client : sessionId zurück
+    Client  ->> Server : 1. InitUpload (Metadaten, expectedCount)
+    Server -->> Client : sessionId zurück
 
     loop 2. Batch-Uploads
-        Client  ->> Server (: PUT /uploads/{sessionId} (Liste von Items mit seqNo, payload)
-        Server ( -->> Client : Ergebnis je Item (ACCEPTED, REUPLOADED, CONFLICT, INVALID)
+        Client  ->> Server : PUT /uploads/{sessionId} (Liste von Items mit seqNo, payload)
+        Server -->> Client : Ergebnis je Item (ACCEPTED, REUPLOADED, CONFLICT, INVALID)
     end
 
-    Client  ->> Server (: 3. GET /uploads/{sessionId}/status
-    Server ( -->> Client : Status: Fortschritt, Fehler, fehlende Sequenzen
+    Client  ->> Server : 3. GET /uploads/{sessionId}/status
+    Server -->> Client : Status: Fortschritt, Fehler, fehlende Sequenzen
