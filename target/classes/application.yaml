@@ -1,0 +1,8 @@
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    urls:
+      - name: AsyncAPI
+        url: /async_api.yaml

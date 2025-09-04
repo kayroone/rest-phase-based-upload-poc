@@ -1,0 +1,304 @@
+openapi: 3.0.3
+info:
+  title: Phase-based Upload API (Inbox Pattern, 1 VSL-Nummer je Session)
+  version: 1.1.0
+  description: |
+    Upload-API mit Sessions (genau eine VSL pro Session) und optionalem Batching.
+    - **POST /uploads**: Session anlegen (InitUpload)
+    - **PUT /uploads/{sessionId}**: Batch-Upload (mehrere Items mit eigener seqNo)
+    - **GET /uploads/{sessionId}/status**: Fortschritt & Diagnose einer Session
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+tags:
+  - name: uploads
+    description: Upload Sessions & Items
+
+paths:
+  /uploads:
+    post:
+      tags: [uploads]
+      summary: InitUpload – legt eine neue Upload-Session an (genau eine VSL je Session)
+      operationId: initUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadInitRequest'
+            examples:
+              init:
+                value:
+                  bewirtschafterNr: "123456789"
+                  vslNummer: "vsl00001"
+                  anzahlDatensaetzeInsgesamt: 3
+                  erstellungsdatum: "2025-07-04T10:00:00Z"
+      responses:
+        '201':
+          description: Session angelegt
+          headers:
+            Location:
+              description: Resource-URI der Session
+              schema:
+                type: string
+                example: /uploads/3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadInitResponse'
+        '400':
+          description: Ungültiger Init-Body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /uploads/{sessionId}:
+    put:
+      tags: [uploads]
+      summary: Batch-Upload – mehrere Items (seqNo + payload) in einem Request
+      operationId: uploadBatch
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          description: ID der UploadSession (UUID)
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              minItems: 1
+              items:
+                $ref: '#/components/schemas/ItemUploadRequest'
+            examples:
+              example:
+                value:
+                  - { seqNo: 1, payload: { betrag: 100 } }
+                  - { seqNo: 2, payload: { betrag: 200 } }
+      responses:
+        '200':
+          description: Batch verarbeitet (Ergebnis pro Item)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchUploadResponse'
+        '400':
+          description: Ungültiger Batch (z. B. leer, zu groß, seqNo out of range)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: Unbekannte sessionId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Konflikt (Session-Zustand oder Item-Konflikt auf Gesamtebene)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '410':
+          description: Session abgelaufen (expired)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /uploads/{sessionId}/status:
+    get:
+      tags: [uploads]
+      summary: Status einsehen – Fortschritt & Diagnose einer UploadSession
+      operationId: getUploadStatus
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Status der Session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatusResponse'
+              examples:
+                example:
+                  value:
+                    sessionId: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+                    sessionStatus: "SEALED"
+                    expected: 3
+                    received: 3
+                    pending: 0
+                    processing: 0
+                    done: 3
+                    error: 0
+                    missingSequence: []
+                    errorSequence: []
+        '404':
+          description: Unbekannte sessionId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+components:
+  schemas:
+    UploadInitRequest:
+      type: object
+      required: [bewirtschafterNr, vslNummer, anzahlDatensaetzeInsgesamt]
+      properties:
+        bewirtschafterNr:
+          type: string
+          description: Fachlicher Absender/Ident
+          example: "123456789"
+        vslNummer:
+          type: string
+          description: Eindeutige VSL-Kennung dieser Session
+          example: "vsl00001"
+        anzahlDatensaetzeInsgesamt:
+          type: integer
+          minimum: 1
+          description: Erwartete Anzahl Items (expected)
+          example: 3
+        erstellungsdatum:
+          type: string
+          format: date-time
+          nullable: true
+          description: Optional (ISO-8601)
+          example: "2025-07-04T10:00:00Z"
+
+    UploadInitResponse:
+      type: object
+      required: [sessionId, status, createdAt, expiresAt, vslNummer, expected]
+      properties:
+        sessionId:
+          type: string
+          description: ID der UploadSession (UUID)
+          example: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+        status:
+          $ref: '#/components/schemas/UploadSessionStatus'
+        createdAt:
+          type: string
+          format: date-time
+          example: "2025-09-03T14:00:00"
+        expiresAt:
+          type: string
+          format: date-time
+          example: "2025-09-03T16:00:00"
+        vslNummer:
+          type: string
+          example: "vsl00001"
+        expected:
+          type: integer
+          example: 3
+
+    ItemUploadRequest:
+      type: object
+      required: [seqNo, payload]
+      properties:
+        seqNo:
+          type: integer
+          minimum: 1
+          description: Laufende Nummer innerhalb der Session (1..expected)
+          example: 1
+        payload:
+          description: Freies JSON-Objekt eines einzelnen Datensatzes
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: string
+          example:
+            betrag: 100
+      description: |
+        Hinweis: Wenn der Server intern als String speichert, kann `payload` dennoch als JSON-Objekt geliefert werden.
+        Serverseitig wird dieses dann serialisiert (z. B. via JsonNode#toString()).
+
+    BatchUploadResultStatus:
+      type: string
+      enum: [ACCEPTED, REUPLOADED, CONFLICT, INVALID]
+
+    BatchUploadResult:
+      type: object
+      required: [seqNo, status]
+      properties:
+        seqNo:
+          type: integer
+          example: 1
+        status:
+          $ref: '#/components/schemas/BatchUploadResultStatus'
+        message:
+          type: string
+          nullable: true
+          example: "re-uploaded from ERROR"
+
+    BatchUploadResponse:
+      type: object
+      required: [sessionId, results]
+      properties:
+        sessionId:
+          type: string
+          example: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchUploadResult'
+
+    UploadStatusResponse:
+      type: object
+      required:
+        [sessionId, sessionStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence]
+      properties:
+        sessionId:
+          type: string
+          example: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+        sessionStatus:
+          $ref: '#/components/schemas/UploadSessionStatus'
+        expected:
+          type: integer
+          description: Anzahl laut InitUpload
+          example: 3
+        received:
+          type: integer
+          description: Anzahl bereits angekommener Items (egal welcher Status)
+          example: 3
+        pending:
+          type: integer
+          example: 0
+        processing:
+          type: integer
+          example: 0
+        done:
+          type: integer
+          example: 3
+        error:
+          type: integer
+          example: 0
+        missingSequence:
+          type: array
+          description: Laufende Nummern (1..expected), zu denen **kein** Item existiert
+          items: { type: integer }
+          example: []
+        errorSequence:
+          type: array
+          description: Laufende Nummern von Items im Status **ERROR**
+          items: { type: integer }
+          example: []
+
+    UploadSessionStatus:
+      type: string
+      enum: [ACTIVE, SEALED, COMPLETED, ABORTED]
+
+    Error:
+      type: object
+      properties:
+        status:
+          type: integer
+          example: 409
+        error:
+          type: string
+          example: "Conflict"
+        message:
+          type: string
+          example: "item already exists"
