@@ -8,18 +8,16 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Repository
-public class InMemoryUploadSessionRepository implements UploadSessionRepository {
+public class InMemoryUploadSessionRepository {
 
-    private final Map<String, UploadSession> sessions = new ConcurrentHashMap<>();
+    private final Map<String, UploadSession> store = new ConcurrentHashMap<>();
 
-    @Override
     public UploadSession save(UploadSession session) {
-        sessions.put(session.getUploadId(), session);
+        store.put(session.getSessionId(), session);
         return session;
     }
 
-    @Override
-    public Optional<UploadSession> find(String uploadId) {
-        return Optional.ofNullable(sessions.get(uploadId));
+    public Optional<UploadSession> find(String sessionId) {
+        return Optional.ofNullable(store.get(sessionId));
     }
 }
