@@ -6,11 +6,10 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
-import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/upload")
+@RequestMapping("/zahlungsdaten-api/v1")
 public class UploadRestController {
 
     private final UploadService service;
@@ -20,48 +19,50 @@ public class UploadRestController {
     }
 
     /**
-     * InitUpload: legt eine neue Upload-Session (genau eine VSL je Session) an.
-     * Body enthält Metadaten inkl. anzahlDatensaetzeInsgesamt.
+     * POST /zahlungsdaten-api/v1/upload
      */
-    @PostMapping
+    @PostMapping("/upload")
     public ResponseEntity<?> init(@RequestBody UploadInitRequest req) {
 
-        UploadSession session = service.initUpload(req);
+        UploadSession s = service.initUpload(req);
 
         return ResponseEntity
-                .created(URI.create("/upload/" + session.getSessionId()))
+                .created(URI.create("/zahlungsdaten-api/v1/upload/" + s.getUploadId()))
                 .body(Map.of(
-                        "sessionId", session.getSessionId(),
-                        "status", session.getStatus().name(),
-                        "createdAt", session.getCreatedAt().toString(),
-                        "expiresAt", session.getExpiresAt().toString(),
-                        "vslNummer", session.getVslNummer(),
-                        "expected", session.getExpectedCount()
+                        "uploadId", s.getUploadId(),
+                        "status", s.getStatus().name(),
+                        "createdAt", s.getCreatedAt().toString(),
+                        "expiresAt", s.getExpiresAt().toString(),
+                        "vslNummer", s.getVslNummer(),
+                        "expected", s.getExpectedCount()
                 ));
     }
 
-
     /**
-     * Batch-Upload: mehrere Items (mit eigener seqNo) in einem Request hochladen.
-     * Jedes Item wird anhand (sessionId, seqNo) idempotent verarbeitet.
-     * <p>
-     * Hinweis: Der Service validiert u.a. maxItemsPerRequest, Duplikate im Batch,
-     * Sequenzbereich (1..expected) sowie Re-Upload-Policy (ERROR-only).
+     * PUT /zahlungsdaten-api/v1/upload/{uploadId}/items
      */
-    @PutMapping("/{sessionId}")
-    public ResponseEntity<BatchUploadResponse> putBatch(
-            @PathVariable String sessionId,
-            @RequestBody List<ItemUploadRequest> batch
+    @PutMapping("/upload/{uploadId}/items")
+    public ResponseEntity<BatchUploadResponse> uploadBatch(
+            @PathVariable String uploadId,
+            @RequestBody java.util.List<ItemUploadRequest> items
     ) {
-        BatchUploadResponse result = service.uploadBatch(sessionId, batch);
+        BatchUploadResponse result = service.uploadBatch(uploadId, items);
         return ResponseEntity.ok(result);
     }
 
     /**
-     * Status der Session abrufen (Fortschritt, fehlende/fehlerhafte Sequenzen).
+     * GET /zahlungsdaten-api/v1/upload/{uploadId} — Status eines Uploads
      */
-    @GetMapping("/{sessionId}/status")
-    public ResponseEntity<UploadStatusResponse> status(@PathVariable String sessionId) {
-        return ResponseEntity.ok(service.getStatus(sessionId));
+    @GetMapping("/upload/{uploadId}")
+    public ResponseEntity<UploadStatusResponse> getStatus(@PathVariable String uploadId) {
+        return ResponseEntity.ok(service.getStatus(uploadId));
+    }
+
+    /**
+     * GET /zahlungsdaten-api/v1/upload — Status aller Uploads
+     */
+    @GetMapping("/upload")
+    public ResponseEntity<UploadStatusListResponse> getAllStatus() {
+        return ResponseEntity.ok(service.getAllStatus());
     }
 }

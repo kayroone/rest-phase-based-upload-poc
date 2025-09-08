@@ -7,15 +7,11 @@ import lombok.NoArgsConstructor;
 
 import java.util.List;
 
-/**
- * Response-DTO für den Batch-Upload: fasst die Ergebnisse pro Item zusammen.
- */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class BatchUploadResponse {
-    private String uploadId;
-    private List<BatchUploadResult> results;
+public class UploadStatusListResponse {
+    private int total;                                   // Anzahl gefundener Uploads
+    private List<UploadStatusResponse> items;            // Status-Daten je Upload
 }
-

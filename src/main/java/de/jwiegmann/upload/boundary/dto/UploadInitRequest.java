@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -12,6 +14,6 @@ import lombok.NoArgsConstructor;
 public class UploadInitRequest {
     private String bewNr;
     private String vslNummer;
-    private int anzahlDatensaetzeGesamt;
-    private String erstellungsdatum;
+    private int anzahlDatensaetzeInsgesamt;
+    private LocalDateTime erstellungsdatum;
 }

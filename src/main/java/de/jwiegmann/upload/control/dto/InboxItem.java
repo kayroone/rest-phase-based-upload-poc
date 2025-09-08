@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 
 /**
  * Ein einzelner Datensatz innerhalb einer UploadSession.
- * Identifiziert über (sessionId, sequenceNumber).
+ * Identifiziert über (uploadId, sequenceNumber).
  */
 @Data
 @Builder
@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class InboxItem {
 
-    private String sessionId;
+    private String uploadId;
     private int seqNo;                // laufende Nummer 1..expectedCount
     private String payload;           // JSON-Blob als String im PoC
     private UploadItemStatus status;  // PENDING, PROCESSING, DONE, ERROR

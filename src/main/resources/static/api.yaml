@@ -1,26 +1,30 @@
 openapi: 3.0.3
 info:
-  title: Phase-based Upload API (Inbox Pattern, 1 VSL-Nummer je Session)
-  version: 1.1.0
+  title: Zahlungsdaten-API
+  version: 1.1.1
   description: |
-    Upload-API mit Sessions (genau eine VSL pro Session) und optionalem Batching.
-    - **POST /uploads**: Session anlegen (InitUpload)
-    - **PUT /uploads/{sessionId}**: Batch-Upload (mehrere Items mit eigener seqNo)
-    - **GET /uploads/{sessionId}/status**: Fortschritt & Diagnose einer Session
+    Zahlungsdaten Upload-API mit optionalem Batching.
 
-servers:
-  - url: http://localhost:8080
-    description: Local dev
-
+    **Endpoints**
+    - **POST /upload**: Neuen Upload anlegen
+    - **PUT /upload/{uploadId}/items**: Batch-Upload (mehrere Items zu einer VSL)
+    - **GET /upload/{uploadId}**: Fortschritt & Diagnose eines Uploads
+    - **GET /upload**: Fortschritt & Diagnose aller Uploads
 tags:
-  - name: uploads
-    description: Upload Sessions & Items
+  - name: upload
+    description: Upload-Initialisierung, Batch-Übertragung und Statusabfragen
 
 paths:
-  /uploads:
+  /zahlungsdaten-api/v1/upload:
     post:
-      tags: [uploads]
-      summary: InitUpload – legt eine neue Upload-Session an (genau eine VSL je Session)
+      tags: [upload]
+      summary: Neuen Upload initiieren – erzeugt eine neue serverseitige Upload-Session.
+      description: >
+        Pro Upload können n Datensätze zu genau einer VSL-Nummer übertragen werden.
+        Beim Start erfolgt die Berechtigungsprüfung des Bewirtschafters für den
+        angegebenen Verarbeitungsschlüssel (VSL). Der Upload wird automatisch
+        abgeschlossen, sobald alle übermittelten Zahlungsdatensätze erfolgreich
+        verarbeitet wurden.
       operationId: initUpload
       requestBody:
         required: true
@@ -37,13 +41,13 @@ paths:
                   erstellungsdatum: "2025-07-04T10:00:00Z"
       responses:
         '201':
-          description: Session angelegt
+          description: Upload angelegt
           headers:
             Location:
-              description: Resource-URI der Session
+              description: Resource-URI des Uploads
               schema:
                 type: string
-                example: /uploads/3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f
+                example: /zahlungsdaten-api/v1/upload/3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f
           content:
             application/json:
               schema:
@@ -52,19 +56,62 @@ paths:
           description: Ungültiger Init-Body
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [upload]
+      summary: Status einsehen – Fortschritt & Diagnosedaten zu allen Uploads
+      operationId: getAllUploadsStatus
+      responses:
+        '200':
+          description: Statusliste aller Uploads (leer, wenn keine vorhanden)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadStatusListResponse'
+              examples:
+                example:
+                  value:
+                    total: 2
+                    items:
+                      - uploadId: "11111111-1111-1111-1111-111111111111"
+                        uploadStatus: "ACTIVE"
+                        expected: 3
+                        received: 2
+                        pending: 2
+                        processing: 0
+                        done: 0
+                        error: 0
+                        missingSequence: [3]
+                        errorSequence: []
+                      - uploadId: "22222222-2222-2222-2222-222222222222"
+                        uploadStatus: "SEALED"
+                        expected: 5
+                        received: 5
+                        pending: 0
+                        processing: 0
+                        done: 5
+                        error: 0
+                        missingSequence: []
+                        errorSequence: []
 
-  /uploads/{sessionId}:
+  /zahlungsdaten-api/v1/upload/{uploadId}/items:
     put:
-      tags: [uploads]
-      summary: Batch-Upload – mehrere Items (seqNo + payload) in einem Request
+      tags: [upload]
+      summary: Upload von n Zahlungsdatensätzen für die angegebene uploadId
+      description: >
+        Die VSL-Datensätze (Items) werden in Batches von 1 bis n pro Request
+        übertragen. Jedes Item enthält eine fortlaufende Nummer (seqNo) sowie
+        den zugehörigen VSL-Payload. Fehlerhafte Items können bei Bedarf erneut
+        hochgeladen werden.
       operationId: uploadBatch
       parameters:
-        - name: sessionId
+        - name: uploadId
           in: path
           required: true
-          description: ID der UploadSession (UUID)
-          schema: { type: string }
+          description: ID des Uploads (UUID)
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -90,36 +137,41 @@ paths:
           description: Ungültiger Batch (z. B. leer, zu groß, seqNo out of range)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
-          description: Unbekannte sessionId
+          description: Unbekannte uploadId
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
-          description: Konflikt (Session-Zustand oder Item-Konflikt auf Gesamtebene)
+          description: Konflikt (Upload-Zustand oder Item-Konflikt auf Gesamtebene)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
         '410':
-          description: Session abgelaufen (expired)
+          description: Upload-Gültigkeitszeitraum abgelaufen (expired)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
 
-  /uploads/{sessionId}/status:
+  /zahlungsdaten-api/v1/upload/{uploadId}:
     get:
-      tags: [uploads]
-      summary: Status einsehen – Fortschritt & Diagnose einer UploadSession
+      tags: [upload]
+      summary: Status einsehen – Fortschritt & Diagnosedaten zu einem Upload
       operationId: getUploadStatus
       parameters:
-        - name: sessionId
+        - name: uploadId
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
         '200':
-          description: Status der Session
+          description: Status des Uploads
           content:
             application/json:
               schema:
@@ -127,8 +179,8 @@ paths:
               examples:
                 example:
                   value:
-                    sessionId: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
-                    sessionStatus: "SEALED"
+                    uploadId: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+                    uploadStatus: "SEALED"
                     expected: 3
                     received: 3
                     pending: 0
@@ -138,10 +190,11 @@ paths:
                     missingSequence: []
                     errorSequence: []
         '404':
-          description: Unbekannte sessionId
+          description: Unbekannte uploadId
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   schemas:
@@ -155,7 +208,7 @@ components:
           example: "123456789"
         vslNummer:
           type: string
-          description: Eindeutige VSL-Kennung dieser Session
+          description: Eindeutige VSL-Kennung dieses Uploads
           example: "vsl00001"
         anzahlDatensaetzeInsgesamt:
           type: integer
@@ -171,22 +224,22 @@ components:
 
     UploadInitResponse:
       type: object
-      required: [sessionId, status, createdAt, expiresAt, vslNummer, expected]
+      required: [uploadId, status, createdAt, expiresAt, vslNummer, expected]
       properties:
-        sessionId:
+        uploadId:
           type: string
-          description: ID der UploadSession (UUID)
+          description: ID des Uploads (UUID)
           example: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
         status:
           $ref: '#/components/schemas/UploadSessionStatus'
         createdAt:
           type: string
           format: date-time
-          example: "2025-09-03T14:00:00"
+          example: "2025-09-03T14:00:00Z"
         expiresAt:
           type: string
           format: date-time
-          example: "2025-09-03T16:00:00"
+          example: "2025-09-03T16:00:00Z"
         vslNummer:
           type: string
           example: "vsl00001"
@@ -201,7 +254,7 @@ components:
         seqNo:
           type: integer
           minimum: 1
-          description: Laufende Nummer innerhalb der Session (1..expected)
+          description: Laufende Nummer innerhalb des Uploads (1..expected)
           example: 1
         payload:
           description: Freies JSON-Objekt eines einzelnen Datensatzes
@@ -235,9 +288,9 @@ components:
 
     BatchUploadResponse:
       type: object
-      required: [sessionId, results]
+      required: [uploadId, results]
       properties:
-        sessionId:
+        uploadId:
           type: string
           example: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
         results:
@@ -248,12 +301,12 @@ components:
     UploadStatusResponse:
       type: object
       required:
-        [sessionId, sessionStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence]
+        [uploadId, uploadStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence]
       properties:
-        sessionId:
+        uploadId:
           type: string
           example: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
-        sessionStatus:
+        uploadStatus:
           $ref: '#/components/schemas/UploadSessionStatus'
         expected:
           type: integer
@@ -278,13 +331,30 @@ components:
         missingSequence:
           type: array
           description: Laufende Nummern (1..expected), zu denen **kein** Item existiert
-          items: { type: integer }
+          items:
+            type: integer
           example: []
         errorSequence:
           type: array
           description: Laufende Nummern von Items im Status **ERROR**
-          items: { type: integer }
+          items:
+            type: integer
           example: []
+
+    UploadStatusListResponse:
+      type: object
+      description: Aggregierter Status über alle Uploads.
+      required: [total, items]
+      properties:
+        total:
+          type: integer
+          description: Anzahl gefundener Uploads (entspricht items.length)
+          example: 2
+        items:
+          type: array
+          description: Liste der Upload-Statusobjekte
+          items:
+            $ref: '#/components/schemas/UploadStatusResponse'
 
     UploadSessionStatus:
       type: string

@@ -16,19 +16,18 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static de.jwiegmann.upload.boundary.dto.status.UploadItemStatus.*;
-
 @Service
 public class UploadService {
 
     private static final int MAX_ITEMS_PER_REQUEST = 1000; // TODO: konfigurierbar machen
     private static final Duration SESSION_IDLE_TIMEOUT = Duration.ofHours(2);
 
-    private final InMemoryUploadSessionRepository sessionRepo;
+    private final InMemoryUploadSessionRepository uploadSessionRepository;
     private final InMemoryInboxItemRepository inboxItemRepository;
 
-    public UploadService(InMemoryUploadSessionRepository sessionRepo, InMemoryInboxItemRepository inboxItemRepository) {
-        this.sessionRepo = sessionRepo;
+    public UploadService(InMemoryUploadSessionRepository uploadSessionRepository,
+                         InMemoryInboxItemRepository inboxItemRepository) {
+        this.uploadSessionRepository = uploadSessionRepository;
         this.inboxItemRepository = inboxItemRepository;
     }
 
@@ -40,39 +39,39 @@ public class UploadService {
         // 1. Metadaten prüfen
         if (req == null || req.getBewNr() == null
                 || req.getVslNummer() == null
-                || req.getAnzahlDatensaetzeGesamt() <= 0) {
+                || req.getAnzahlDatensaetzeInsgesamt() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid init payload");
         }
 
-        // 2. Generiere sessionId und expire date
-        String sessionId = UUID.randomUUID().toString();
+        // 2. Generiere uploadId und expire date
+        String uploadId = UUID.randomUUID().toString();
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime expires = now.plus(Duration.ofHours(2));
 
         // 3. Erzeugen und persistieren der neuen Session
         UploadSession s = UploadSession.builder()
-                .sessionId(sessionId)
+                .uploadId(uploadId)
                 .status(UploadSessionStatus.ACTIVE)
                 .createdAt(now)
                 .expiresAt(expires)
                 .bewNr(req.getBewNr())
                 .vslNummer(req.getVslNummer())
-                .expectedCount(req.getAnzahlDatensaetzeGesamt())
+                .expectedCount(req.getAnzahlDatensaetzeInsgesamt())
                 .receivedCount(0)
                 .build();
 
-        return sessionRepo.save(s);
+        return uploadSessionRepository.save(s);
     }
 
-    public BatchUploadResponse uploadBatch(String sessionId, List<ItemUploadRequest> batch) {
+    public BatchUploadResponse uploadBatch(String uploadId, List<ItemUploadRequest> batch) {
 
-        UploadSession session = sessionRepo.find(sessionId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "sessionId not found"));
+        UploadSession session = uploadSessionRepository.find(uploadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
 
-        // 1. Expire date der session prüfen
+        // 1. Expire date der upload session prüfen
         if (session.getExpiresAt() != null && LocalDateTime.now().isAfter(session.getExpiresAt())) {
             session.setStatus(UploadSessionStatus.ABORTED);
-            sessionRepo.save(session);
+            uploadSessionRepository.save(session);
             throw new ResponseStatusException(HttpStatus.GONE, "upload session expired");
         }
 
@@ -114,47 +113,56 @@ public class UploadService {
         }
 
         return BatchUploadResponse.builder()
-                .sessionId(sessionId)
+                .uploadId(uploadId)
                 .results(results)
                 .build();
     }
 
-    /**
-     * Status der Session zusammenfassen.
-     */
-    public UploadStatusResponse getStatus(String sessionId) {
+    public UploadStatusResponse getStatus(String uploadId) {
+        UploadSession s = uploadSessionRepository.find(uploadId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
+        List<InboxItem> items = inboxItemRepository.findAll(uploadId);
+        return buildStatusResponse(s, items);
+    }
 
-        UploadSession s = sessionRepo.find(sessionId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "sessionId not found"));
 
-        List<InboxItem> items = inboxItemRepository.findAll(sessionId);
+    public UploadStatusListResponse getAllStatus() {
 
-        // Wie viele Datensätze werden erwartet und wie viele sind angekommen?
+        List<UploadSession> sessions = uploadSessionRepository.findAll();
+        List<UploadStatusResponse> items = sessions.stream()
+                .map(s -> buildStatusResponse(s, inboxItemRepository.findAll(s.getUploadId())))
+                .toList();
+
+        return UploadStatusListResponse.builder()
+                .total(items.size())
+                .items(items)
+                .build();
+    }
+
+    private UploadStatusResponse buildStatusResponse(UploadSession s, List<InboxItem> items) {
         int expected = s.getExpectedCount();
         int received = items.size();
 
-        // Wie viele Datensätze wurden bearbeitet, wie viele werden gerade bearbeitet und wie viele sind fertig?
-        int pending = (int) items.stream().filter(i -> i.getStatus() == PENDING).count();
-        int processing = (int) items.stream().filter(i -> i.getStatus() == PROCESSING).count();
+        int pending = (int) items.stream().filter(i -> i.getStatus() == UploadItemStatus.PENDING).count();
+        int processing = (int) items.stream().filter(i -> i.getStatus() == UploadItemStatus.PROCESSING).count();
         int done = (int) items.stream().filter(i -> i.getStatus() == UploadItemStatus.DONE).count();
+        int error = (int) items.stream().filter(i -> i.getStatus() == UploadItemStatus.ERROR).count();
 
-        // Bei wie vielen Datensätzen ist ein Fehler aufgetreten?
-        int error = (int) items.stream().filter(i -> i.getStatus() == ERROR).count();
+        Set<Integer> present = items.stream().map(InboxItem::getSeqNo).collect(java.util.stream.Collectors.toSet());
+        List<Integer> missing = new java.util.ArrayList<>();
+        for (int i = 1; i <= expected; i++) {
+            if (!present.contains(i)) missing.add(i);
+        }
 
-        // Bei fehlerhaften Datensätzen: Welche Datensätze sind das konkret?
-        Set<Integer> present = items.stream().map(InboxItem::getSeqNo).collect(Collectors.toSet());
-        List<Integer> missing = new ArrayList<>();
-        for (int i = 1; i <= expected; i++) if (!present.contains(i)) missing.add(i);
-
-        List<Integer> errorSequence = items.stream()
-                .filter(i -> i.getStatus() == ERROR)
+        List<Integer> errorSeq = items.stream()
+                .filter(i -> i.getStatus() == UploadItemStatus.ERROR)
                 .map(InboxItem::getSeqNo)
                 .sorted()
                 .toList();
 
         return UploadStatusResponse.builder()
-                .sessionId(sessionId)
-                .sessionStatus(s.getStatus().name())
+                .uploadId(s.getUploadId())
+                .uploadStatus(s.getStatus().name())
                 .expected(expected)
                 .received(received)
                 .pending(pending)
@@ -162,7 +170,7 @@ public class UploadService {
                 .done(done)
                 .error(error)
                 .missingSequence(missing)
-                .errorSequence(errorSequence)
+                .errorSequence(errorSeq)
                 .build();
     }
 
@@ -201,7 +209,7 @@ public class UploadService {
         }
 
         // 3) Session-Status-Policy
-        Optional<InboxItem> existingItem = inboxItemRepository.find(session.getSessionId(), seqNo);
+        Optional<InboxItem> existingItem = inboxItemRepository.find(session.getUploadId(), seqNo);
 
         // Session ist bereits geschlossen - nur Reuploads werden erlaubt
         if (session.getStatus() == UploadSessionStatus.SEALED) {
@@ -246,7 +254,7 @@ public class UploadService {
         }
 
         InboxItem newInboxItem = InboxItem.builder()
-                .sessionId(session.getSessionId())
+                .uploadId(session.getUploadId())
                 .seqNo(seqNo)
                 .payload(item.getPayload() != null ? item.getPayload().toString() : null)
                 .status(UploadItemStatus.PENDING)
@@ -280,7 +288,7 @@ public class UploadService {
             return BatchUploadResult.builder()
                     .seqNo(seqNo)
                     .status(BatchUploadResultStatus.CONFLICT)
-                    .message("session sealed: new items not allowed")
+                    .message("upload session sealed: new items not allowed")
                     .build();
         }
 
@@ -301,7 +309,7 @@ public class UploadService {
         return BatchUploadResult.builder()
                 .seqNo(seqNo)
                 .status(BatchUploadResultStatus.CONFLICT)
-                .message("session sealed: only ERROR items can be re-uploaded")
+                .message("upload session sealed: only ERROR items can be re-uploaded")
                 .build();
     }
 
@@ -314,6 +322,6 @@ public class UploadService {
             session.setStatus(UploadSessionStatus.SEALED);
         }
         session.setExpiresAt(now.plus(SESSION_IDLE_TIMEOUT));
-        sessionRepo.save(session);
+        uploadSessionRepository.save(session);
     }
 }

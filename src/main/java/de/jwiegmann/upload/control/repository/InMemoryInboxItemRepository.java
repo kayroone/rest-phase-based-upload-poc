@@ -13,32 +13,32 @@ import java.util.stream.Collectors;
 
 /**
  * Einfaches In-Memory Repository für InboxItems.
- * Map Struktur: Map<sessionId, Map<sequenceNumber, InboxItem>>.
+ * Map Struktur: Map<uploadId, Map<sequenceNumber, InboxItem>>.
  */
 @Repository
 public class InMemoryInboxItemRepository {
 
     private final Map<String, Map<Integer, InboxItem>> store = new ConcurrentHashMap<>();
 
-    public Optional<InboxItem> find(String sessionId, int sequenceNumber) {
-        return Optional.ofNullable(store.getOrDefault(sessionId, Map.of()).get(sequenceNumber));
+    public Optional<InboxItem> find(String uploadId, int sequenceNumber) {
+        return Optional.ofNullable(store.getOrDefault(uploadId, Map.of()).get(sequenceNumber));
     }
 
     /**
-     * Speichert das Item, falls für diese (sessionId, sequenceNumber) noch keines existiert.
+     * Speichert das Item, falls für diese (uploadId, sequenceNumber) noch keines existiert.
      * Gibt true zurück, wenn gespeichert wurde, false wenn bereits vorhanden.
      */
     public boolean saveIfAbsent(InboxItem item) {
-        return store.computeIfAbsent(item.getSessionId(), k -> new ConcurrentHashMap<>())
+        return store.computeIfAbsent(item.getUploadId(), k -> new ConcurrentHashMap<>())
                 .putIfAbsent(item.getSeqNo(), item) == null;
     }
 
-    public List<InboxItem> findAll(String sessionId) {
-        return new ArrayList<>(store.getOrDefault(sessionId, Map.of()).values());
+    public List<InboxItem> findAll(String uploadId) {
+        return new ArrayList<>(store.getOrDefault(uploadId, Map.of()).values());
     }
 
-    public List<InboxItem> findByStatus(String sessionId, UploadItemStatus status) {
-        return store.getOrDefault(sessionId, Map.of()).values().stream()
+    public List<InboxItem> findByStatus(String uploadId, UploadItemStatus status) {
+        return store.getOrDefault(uploadId, Map.of()).values().stream()
                 .filter(i -> i.getStatus() == status)
                 .collect(Collectors.toList());
     }

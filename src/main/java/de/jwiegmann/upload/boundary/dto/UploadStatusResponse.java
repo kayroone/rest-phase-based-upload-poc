@@ -18,8 +18,8 @@ import java.util.List;
 @AllArgsConstructor
 public class UploadStatusResponse {
 
-    private String sessionId;
-    private String sessionStatus; // ACTIVE | SEALED | COMPLETED | ABORTED
+    private String uploadId;
+    private String uploadStatus; // ACTIVE | SEALED | COMPLETED | ABORTED
     private int expected;
     private int received;
     private int pending;
