@@ -17,7 +17,7 @@ tags:
 paths:
   /zahlungsdaten-api/v1/upload:
     post:
-      tags: [upload]
+      tags: [ upload ]
       summary: Neuen Upload initiieren – erzeugt eine neue serverseitige Upload-Session.
       description: >
         Pro Upload können n Datensätze zu genau einer VSL-Nummer übertragen werden.
@@ -59,7 +59,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
     get:
-      tags: [upload]
+      tags: [ upload ]
       summary: Status einsehen – Fortschritt & Diagnosedaten zu allen Uploads
       operationId: getAllUploadsStatus
       responses:
@@ -82,8 +82,8 @@ paths:
                         processing: 0
                         done: 0
                         error: 0
-                        missingSequence: [3]
-                        errorSequence: []
+                        missingSequence: [ 3 ]
+                        errorSequence: [ ]
                       - uploadId: "22222222-2222-2222-2222-222222222222"
                         uploadStatus: "SEALED"
                         expected: 5
@@ -92,12 +92,12 @@ paths:
                         processing: 0
                         done: 5
                         error: 0
-                        missingSequence: []
-                        errorSequence: []
+                        missingSequence: [ ]
+                        errorSequence: [ ]
 
   /zahlungsdaten-api/v1/upload/{uploadId}/items:
     put:
-      tags: [upload]
+      tags: [ upload ]
       summary: Upload von n Zahlungsdatensätzen für die angegebene uploadId
       description: >
         Die VSL-Datensätze (Items) werden in Batches von 1 bis n pro Request
@@ -133,6 +133,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BatchUploadResponse'
+              examples:
+                success:
+                  summary: Erfolgreiche Verarbeitung
+                  value:
+                    uploadId: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+                    results:
+                      - { seqNo: 1, status: "ACCEPTED" }
+                      - { seqNo: 2, status: "ACCEPTED" }
+                      - { seqNo: 3, status: "ACCEPTED" }
+                mixed_results:
+                  summary: Verarbeitung mit Validierungsfehlern
+                  value:
+                    uploadId: "3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f"
+                    results:
+                      - { seqNo: 1, status: "ACCEPTED" }
+                      - seqNo: 2
+                        status: "INVALID"
+                        error:
+                          code: "DUPLICATE_SEQ_NO"
+                          message: "duplicate seqNo in request"
+                          details: { seqNo: 2 }
+                          retryable: false
+                          timestamp: "2025-09-10T14:30:45.123456Z"
+                      - { seqNo: 3, status: "ACCEPTED" }
         '400':
           description: Ungültiger Batch (z. B. leer, zu groß, seqNo out of range)
           content:
@@ -160,7 +184,7 @@ paths:
 
   /zahlungsdaten-api/v1/upload/{uploadId}:
     get:
-      tags: [upload]
+      tags: [ upload ]
       summary: Status einsehen – Fortschritt & Diagnosedaten zu einem Upload
       operationId: getUploadStatus
       parameters:
@@ -187,8 +211,8 @@ paths:
                     processing: 0
                     done: 3
                     error: 0
-                    missingSequence: []
-                    errorSequence: []
+                    missingSequence: [ ]
+                    errorSequence: [ ]
         '404':
           description: Unbekannte uploadId
           content:
@@ -200,7 +224,7 @@ components:
   schemas:
     UploadInitRequest:
       type: object
-      required: [bewNr, vslNummer, anzahlDatensaetzeInsgesamt]
+      required: [ bewNr, vslNummer, anzahlDatensaetzeInsgesamt ]
       properties:
         bewNr:
           type: string
@@ -224,7 +248,7 @@ components:
 
     UploadInitResponse:
       type: object
-      required: [uploadId, status, createdAt, expiresAt, vslNummer, expected]
+      required: [ uploadId, status, createdAt, expiresAt, vslNummer, expected ]
       properties:
         uploadId:
           type: string
@@ -249,7 +273,7 @@ components:
 
     ItemUploadRequest:
       type: object
-      required: [seqNo, payload]
+      required: [ seqNo, payload ]
       properties:
         seqNo:
           type: integer
@@ -270,11 +294,11 @@ components:
 
     BatchUploadResultStatus:
       type: string
-      enum: [ACCEPTED, REUPLOADED, CONFLICT, INVALID]
+      enum: [ ACCEPTED, REUPLOADED, CONFLICT, INVALID ]
 
     BatchUploadResult:
       type: object
-      required: [seqNo, status]
+      required: [ seqNo, status ]
       properties:
         seqNo:
           type: integer
@@ -288,7 +312,7 @@ components:
 
     BatchUploadResponse:
       type: object
-      required: [uploadId, results]
+      required: [ uploadId, results ]
       properties:
         uploadId:
           type: string
@@ -301,7 +325,7 @@ components:
     UploadStatusResponse:
       type: object
       required:
-        [uploadId, uploadStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence]
+        [ uploadId, uploadStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence ]
       properties:
         uploadId:
           type: string
@@ -333,18 +357,18 @@ components:
           description: Laufende Nummern (1..expected), zu denen **kein** Item existiert
           items:
             type: integer
-          example: []
+          example: [ ]
         errorSequence:
           type: array
           description: Laufende Nummern von Items im Status **ERROR**
           items:
             type: integer
-          example: []
+          example: [ ]
 
     UploadStatusListResponse:
       type: object
       description: Aggregierter Status über alle Uploads.
-      required: [total, items]
+      required: [ total, items ]
       properties:
         total:
           type: integer
@@ -358,7 +382,7 @@ components:
 
     UploadSessionStatus:
       type: string
-      enum: [ACTIVE, SEALED, COMPLETED, ABORTED]
+      enum: [ ACTIVE, SEALED, COMPLETED, ABORTED ]
 
     Error:
       type: object
