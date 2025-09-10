@@ -1,4 +1,4 @@
-package de.jwiegmann.upload.boundary.dto;
+package de.jwiegmann.upload.boundary.dto.status;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;

@@ -1,4 +1,4 @@
-package de.jwiegmann.upload.boundary.dto;
+package de.jwiegmann.upload.boundary.dto.status;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;

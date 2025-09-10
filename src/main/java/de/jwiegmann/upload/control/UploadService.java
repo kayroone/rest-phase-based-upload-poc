@@ -1,11 +1,14 @@
 package de.jwiegmann.upload.control;
 
-import de.jwiegmann.upload.boundary.dto.*;
-import de.jwiegmann.upload.boundary.dto.status.BatchUploadResultStatus;
-import de.jwiegmann.upload.boundary.dto.status.UploadItemStatus;
-import de.jwiegmann.upload.boundary.dto.status.UploadSessionStatus;
-import de.jwiegmann.upload.control.dto.InboxItem;
-import de.jwiegmann.upload.control.repository.InMemoryInboxItemRepository;
+import de.jwiegmann.upload.boundary.dto.batch.BatchUploadResponse;
+import de.jwiegmann.upload.boundary.dto.batch.BatchUploadResult;
+import de.jwiegmann.upload.boundary.dto.batch.ItemUploadRequest;
+import de.jwiegmann.upload.boundary.dto.init.UploadInitRequest;
+import de.jwiegmann.upload.boundary.dto.init.UploadSession;
+import de.jwiegmann.upload.boundary.dto.status.*;
+import de.jwiegmann.upload.control.dto.UploadInboxItem;
+import de.jwiegmann.upload.control.dto.UploadValidationResult;
+import de.jwiegmann.upload.control.repository.InMemoryUploadInboxItemRepository;
 import de.jwiegmann.upload.control.repository.InMemoryUploadSessionRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -14,21 +17,25 @@ import org.springframework.web.server.ResponseStatusException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Service
 public class UploadService {
 
-    private static final int MAX_ITEMS_PER_REQUEST = 1000; // TODO: konfigurierbar machen
-    private static final Duration SESSION_IDLE_TIMEOUT = Duration.ofHours(2);
-
     private final InMemoryUploadSessionRepository uploadSessionRepository;
-    private final InMemoryInboxItemRepository inboxItemRepository;
+    private final InMemoryUploadInboxItemRepository inboxItemRepository;
+    private final UploadSessionPolicyHandler sessionPolicyHandler;
+    private final UploadItemProcessor uploadItemProcessor;
+    private final UploadSessionManager uploadSessionManager;
 
     public UploadService(InMemoryUploadSessionRepository uploadSessionRepository,
-                         InMemoryInboxItemRepository inboxItemRepository) {
+                         InMemoryUploadInboxItemRepository inboxItemRepository,
+                         UploadSessionPolicyHandler sessionPolicyHandler, UploadItemProcessor uploadItemProcessor,
+                         UploadSessionManager uploadSessionManager) {
         this.uploadSessionRepository = uploadSessionRepository;
         this.inboxItemRepository = inboxItemRepository;
+        this.sessionPolicyHandler = sessionPolicyHandler;
+        this.uploadItemProcessor = uploadItemProcessor;
+        this.uploadSessionManager = uploadSessionManager;
     }
 
     /**
@@ -68,60 +75,79 @@ public class UploadService {
         UploadSession session = uploadSessionRepository.find(uploadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
 
-        // 1. Expire date der upload session prüfen
-        if (session.getExpiresAt() != null && LocalDateTime.now().isAfter(session.getExpiresAt())) {
-            session.setStatus(UploadSessionStatus.ABORTED);
-            uploadSessionRepository.save(session);
-            throw new ResponseStatusException(HttpStatus.GONE, "upload session expired");
+        // Session-Level Validierung
+        UploadValidationResult sessionValidation = uploadSessionManager.validateSession(session, batch);
+
+        if (!sessionValidation.isValid()) {
+            List<BatchUploadResult> allInvalid = batch.stream()
+                    .map(item -> BatchUploadResult.builder()
+                            .seqNo(item.getSeqNo())
+                            .status(BatchUploadResultStatus.INVALID)
+                            .error(UploadErrorFactory.validationFailed(sessionValidation.getErrorMessage()))
+                            .build())
+                    .toList();
+            return BatchUploadResponse.builder().uploadId(uploadId).results(allInvalid).build();
         }
 
-        // 2. Obergrenze für items pro batch prüfen
-        if (batch == null || batch.isEmpty()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "empty batch");
-        }
-        if (batch.size() > MAX_ITEMS_PER_REQUEST) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST, "batch too large (max " + MAX_ITEMS_PER_REQUEST + ")");
-        }
-
-        // 3. Duplikate in Batch erkennen
-        Set<Integer> dupSeqInRequest = findDuplicateSeqNos(batch);
+        // Item-by-Item Processing mit inline Validation
+        List<BatchUploadResult> allResults = new ArrayList<>();
+        Set<Integer> seenSeqNos = new HashSet<>();
         LocalDateTime now = LocalDateTime.now();
-
-        List<BatchUploadResult> results = new ArrayList<>(batch.size());
-
         int newlyAccepted = 0;
         boolean anyChanged = false;
 
-        // 4. Process batch items
         for (ItemUploadRequest item : batch) {
+            BatchUploadResult result;
 
-            BatchUploadResult result = processSingleItem(session, item, dupSeqInRequest, now);
-            results.add(result);
-
-            if (result.getStatus() == BatchUploadResultStatus.ACCEPTED) {
-                newlyAccepted++;
-                anyChanged = true;
-            } else if (result.getStatus() == BatchUploadResultStatus.REUPLOADED) {
-                anyChanged = true;
+            // 1. Duplikat-Check
+            if (seenSeqNos.contains(item.getSeqNo())) {
+                result = BatchUploadResult.builder()
+                        .seqNo(item.getSeqNo())
+                        .status(BatchUploadResultStatus.INVALID)
+                        .error(UploadErrorFactory.duplicateSeqNoInRequest(item.getSeqNo()))
+                        .build();
             }
+
+            // 2. Range-Check
+            else if (item.getSeqNo() < 1 || item.getSeqNo() > session.getExpectedCount()) {
+                result = BatchUploadResult.builder()
+                        .seqNo(item.getSeqNo())
+                        .status(BatchUploadResultStatus.INVALID)
+                        .error(UploadErrorFactory.invalidSeqNo(item.getSeqNo(), session.getExpectedCount()))
+                        .build();
+            }
+
+            // 3. Normale Verarbeitung
+            else {
+                seenSeqNos.add(item.getSeqNo()); // Merken für Duplikat-Check
+                result = processSingleItem(session, item, now);
+
+                if (result.getStatus() == BatchUploadResultStatus.ACCEPTED) {
+                    newlyAccepted++;
+                    anyChanged = true;
+                } else if (result.getStatus() == BatchUploadResultStatus.REUPLOADED) {
+                    anyChanged = true;
+                }
+            }
+
+            allResults.add(result);
         }
 
-        // 5. Update session 
+        // Session updaten falls nötig
         if (anyChanged) {
-            updateSessionAfterChanges(session, newlyAccepted, now);
+            uploadSessionManager.updateAfterChanges(session, newlyAccepted, now);
         }
 
         return BatchUploadResponse.builder()
                 .uploadId(uploadId)
-                .results(results)
+                .results(allResults)
                 .build();
     }
 
     public UploadStatusResponse getStatus(String uploadId) {
         UploadSession s = uploadSessionRepository.find(uploadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
-        List<InboxItem> items = inboxItemRepository.findAll(uploadId);
+        List<UploadInboxItem> items = inboxItemRepository.findAll(uploadId);
         return buildStatusResponse(s, items);
     }
 
@@ -139,7 +165,7 @@ public class UploadService {
                 .build();
     }
 
-    private UploadStatusResponse buildStatusResponse(UploadSession s, List<InboxItem> items) {
+    private UploadStatusResponse buildStatusResponse(UploadSession s, List<UploadInboxItem> items) {
         int expected = s.getExpectedCount();
         int received = items.size();
 
@@ -148,7 +174,7 @@ public class UploadService {
         int done = (int) items.stream().filter(i -> i.getStatus() == UploadItemStatus.DONE).count();
         int error = (int) items.stream().filter(i -> i.getStatus() == UploadItemStatus.ERROR).count();
 
-        Set<Integer> present = items.stream().map(InboxItem::getSeqNo).collect(java.util.stream.Collectors.toSet());
+        Set<Integer> present = items.stream().map(UploadInboxItem::getSeqNo).collect(java.util.stream.Collectors.toSet());
         List<Integer> missing = new java.util.ArrayList<>();
         for (int i = 1; i <= expected; i++) {
             if (!present.contains(i)) missing.add(i);
@@ -156,7 +182,7 @@ public class UploadService {
 
         List<Integer> errorSeq = items.stream()
                 .filter(i -> i.getStatus() == UploadItemStatus.ERROR)
-                .map(InboxItem::getSeqNo)
+                .map(UploadInboxItem::getSeqNo)
                 .sorted()
                 .toList();
 
@@ -174,154 +200,31 @@ public class UploadService {
                 .build();
     }
 
-    private Set<Integer> findDuplicateSeqNos(List<ItemUploadRequest> items) {
-        Map<Integer, Long> freq = items.stream()
-                .collect(Collectors.groupingBy(ItemUploadRequest::getSeqNo, Collectors.counting()));
-        return freq.entrySet().stream()
-                .filter(e -> e.getValue() > 1)
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
-    }
-
     private BatchUploadResult processSingleItem(UploadSession session,
                                                 ItemUploadRequest item,
-                                                Set<Integer> dupSeqInRequest,
                                                 LocalDateTime now) {
 
         int seqNo = item.getSeqNo();
 
-        // 1) Ist dieses Item ein Duplikat?
-        if (dupSeqInRequest.contains(seqNo)) {
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.INVALID)
-                    .message("duplicate seqNo in request")
-                    .build();
+        // 1. Session Policy prüfen
+        BatchUploadResult policyResult = sessionPolicyHandler.validateSessionPolicy(session, seqNo);
+        if (policyResult != null) {
+            return policyResult;
         }
 
-        // 2) Liegt die laufende Nummer (seqNo) innerhalb der erwarteten Gesamtanzahl von Datensätzen?
-        if (seqNo < 1 || seqNo > session.getExpectedCount()) {
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.INVALID)
-                    .message("seqNo out of range (1.." + session.getExpectedCount() + ")")
-                    .build();
-        }
+        // 2. Bereits vorhandenes Item laden
+        Optional<UploadInboxItem> existingItem = inboxItemRepository.find(session.getUploadId(), seqNo);
 
-        // 3) Session-Status-Policy
-        Optional<InboxItem> existingItem = inboxItemRepository.find(session.getUploadId(), seqNo);
-
-        // Session ist bereits geschlossen - nur Reuploads werden erlaubt
+        // 3. Handling für item uploads im SEALED zustand
         if (session.getStatus() == UploadSessionStatus.SEALED) {
-            return handleSealedItem(item, existingItem, now);
+            return uploadItemProcessor.processItemInSealedSession(item, existingItem, session.getUploadId(), now);
         }
 
-        if (session.getStatus() != UploadSessionStatus.ACTIVE) {
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.CONFLICT)
-                    .message("upload session is not open")
-                    .build();
-        }
-
-        // Handling für bereits existierende Datensätze
+        // 4. Normales handling für neue items
         if (existingItem.isPresent()) {
-
-            InboxItem existing = existingItem.get();
-            return switch (existing.getStatus()) {
-                case ERROR -> {
-                    existing.setPayload(item.getPayload() != null ? item.getPayload().toString() : null);
-                    existing.setStatus(UploadItemStatus.PENDING);
-                    existing.setErrorMessage(null);
-                    existing.setUpdatedAt(now);
-                    yield BatchUploadResult.builder()
-                            .seqNo(seqNo)
-                            .status(BatchUploadResultStatus.REUPLOADED)
-                            .message("re-uploaded from ERROR")
-                            .build();
-                }
-                case PENDING, PROCESSING -> BatchUploadResult.builder()
-                        .seqNo(seqNo)
-                        .status(BatchUploadResultStatus.CONFLICT)
-                        .message("item not finished yet")
-                        .build();
-                case DONE -> BatchUploadResult.builder()
-                        .seqNo(seqNo)
-                        .status(BatchUploadResultStatus.CONFLICT)
-                        .message("item already processed")
-                        .build();
-            };
-        }
-
-        InboxItem newInboxItem = InboxItem.builder()
-                .uploadId(session.getUploadId())
-                .seqNo(seqNo)
-                .payload(item.getPayload() != null ? item.getPayload().toString() : null)
-                .status(UploadItemStatus.PENDING)
-                .createdAt(now)
-                .updatedAt(now)
-                .build();
-
-        boolean inserted = inboxItemRepository.saveIfAbsent(newInboxItem);
-        if (inserted) {
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.ACCEPTED)
-                    .build();
+            return uploadItemProcessor.processExistingItem(existingItem.get(), item, now);
         } else {
-            // selten (Race) – als Konflikt melden
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.CONFLICT)
-                    .message("item already exists")
-                    .build();
+            return uploadItemProcessor.processNewItem(session, item, now);
         }
-    }
-
-    private BatchUploadResult handleSealedItem(ItemUploadRequest item,
-                                               Optional<InboxItem> existingItem,
-                                               LocalDateTime now) {
-
-        int seqNo = item.getSeqNo();
-
-        if (existingItem.isEmpty()) {
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.CONFLICT)
-                    .message("upload session sealed: new items not allowed")
-                    .build();
-        }
-
-        // Ersetzen des existierenden Items gegen das neue
-        InboxItem existing = existingItem.get();
-        if (existing.getStatus() == UploadItemStatus.ERROR) {
-            existing.setPayload(item.getPayload() != null ? item.getPayload().toString() : null);
-            existing.setStatus(UploadItemStatus.PENDING);
-            existing.setErrorMessage(null);
-            existing.setUpdatedAt(now);
-            return BatchUploadResult.builder()
-                    .seqNo(seqNo)
-                    .status(BatchUploadResultStatus.REUPLOADED)
-                    .message("re-uploaded from ERROR")
-                    .build();
-        }
-
-        return BatchUploadResult.builder()
-                .seqNo(seqNo)
-                .status(BatchUploadResultStatus.CONFLICT)
-                .message("upload session sealed: only ERROR items can be re-uploaded")
-                .build();
-    }
-
-    private void updateSessionAfterChanges(UploadSession session, int newlyAccepted, LocalDateTime now) {
-        if (newlyAccepted > 0) {
-            session.setReceivedCount(session.getReceivedCount() + newlyAccepted);
-        }
-        if (session.getStatus() == UploadSessionStatus.ACTIVE
-                && session.getReceivedCount() >= session.getExpectedCount()) {
-            session.setStatus(UploadSessionStatus.SEALED);
-        }
-        session.setExpiresAt(now.plus(SESSION_IDLE_TIMEOUT));
-        uploadSessionRepository.save(session);
     }
 }

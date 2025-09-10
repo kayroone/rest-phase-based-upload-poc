@@ -46,7 +46,7 @@ Content-Type: application/json
   { "seqNo": 3, "payload": "{\"betrag\":300}" }
 ]
 ```
-### Response-Body
+### Response-Body (erfolgreiche Verarbeitung)
 ```json
 {
   "uploadId": "c117a36a-9664-41d7-a9b4-f38830022b73",
@@ -57,6 +57,27 @@ Content-Type: application/json
   ]
 }
 ```
+### Response-Body (mit Verarbeitungsfehlern)
+```json
+{
+  "uploadId": "c117a36a-9664-41d7-a9b4-f38830022b73",
+  "results": [
+    { "seqNo": 1, "status": "ACCEPTED" },
+    {
+      "seqNo": 2,
+      "status": "INVALID",
+      "error": {
+        "code": "DUPLICATE_SEQ_NO",
+        "message": "duplicate seqNo in request",
+        "details": { "seqNo": 2 },
+        "timestamp": "2025-09-10T14:30:45.123456"
+      }
+    },
+    { "seqNo": 3, "status": "ACCEPTED" }
+  ]
+}
+```
+
 → Jeder Eintrag wird idempotent anhand (uploadId, seqNo) verarbeitet.
 Mögliche Statuswerte:
 
@@ -64,6 +85,25 @@ Mögliche Statuswerte:
 * REUPLOADED → zuvor fehlerhaft, jetzt erfolgreich akzeptiert/persistiert
 * CONFLICT → bereits vorhanden (PENDING/PROCESSING/DONE)
 * INVALID → ungültig (z. B. Duplikat: doppelte seqNo im Request)
+
+### Error-Codes und Error-Struktur
+```json
+{
+  "code": "ERROR_CODE",
+  "message": "Human-readable Fehlermeldung",
+  "details": { "contextSpecificInfo": "value" },
+  "timestamp": "2025-09-10T14:30:45.123456"
+}
+```
+Codes:
+
+* DUPLICATE_SEQ_NO - Doppelte Sequenznummer im Request
+* INVALID_SEQ_NO - Sequenznummer außerhalb des erlaubten Bereichs (1..expectedCount)
+* UPLOAD_SESSION_NOT_OPEN - Upload-Session ist nicht im ACTIVE Status
+* SEALED_NEW_ITEMS_NOT_ALLOWED - Neue Items nicht erlaubt bei SEALED Session
+* SEALED_ONLY_ERROR_ITEMS_ALLOWED - In SEALED Session nur Re-Upload von ERROR Items erlaubt
+* ITEM_NOT_FINISHED - Item ist noch in Bearbeitung (PENDING/PROCESSING)
+* ITEM_ALREADY_PROCESSED - Item wurde bereits erfolgreich verarbeitet (DONE)
 
 ### 3. Status
 ```http
@@ -150,3 +190,30 @@ participant Server
 
     Client  ->> Server : 4. GET /upload
     Server -->> Client : Übersicht Status aller Uploads
+```
+
+## Build Commands
+
+### Standard Maven Commands
+```bash
+# Build the project
+mvn compile
+
+# Run tests  
+mvn test
+
+# Package the application
+mvn package
+
+# Run the application
+mvn spring-boot:run
+```
+
+### Testing
+```bash
+# Run all tests
+mvn test
+
+# Run specific test class
+mvn test -Dtest=UploadApiIntegrationTest
+```

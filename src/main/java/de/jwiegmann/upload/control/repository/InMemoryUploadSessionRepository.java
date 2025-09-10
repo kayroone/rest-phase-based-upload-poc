@@ -1,6 +1,6 @@
 package de.jwiegmann.upload.control.repository;
 
-import de.jwiegmann.upload.boundary.dto.UploadSession;
+import de.jwiegmann.upload.boundary.dto.init.UploadSession;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
@@ -23,7 +23,12 @@ public class InMemoryUploadSessionRepository {
         return Optional.ofNullable(store.get(uploadId));
     }
 
+    public Optional<UploadSession> findByUploadId(String uploadId) {
+        return Optional.ofNullable(store.get(uploadId));
+    }
+
     public List<UploadSession> findAll() {
         return new ArrayList<>(store.values());
     }
+
 }

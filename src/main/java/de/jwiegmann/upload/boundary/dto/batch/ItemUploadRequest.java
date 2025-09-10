@@ -1,4 +1,4 @@
-package de.jwiegmann.upload.boundary.dto;
+package de.jwiegmann.upload.boundary.dto.batch;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.AllArgsConstructor;

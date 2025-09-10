@@ -1,5 +1,6 @@
-package de.jwiegmann.upload.boundary.dto;
+package de.jwiegmann.upload.boundary.dto.batch;
 
+import de.jwiegmann.upload.boundary.dto.error.UploadError;
 import de.jwiegmann.upload.boundary.dto.status.BatchUploadResultStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -17,5 +18,5 @@ import lombok.NoArgsConstructor;
 public class BatchUploadResult {
     private int seqNo;
     private BatchUploadResultStatus status;
-    private String message;
+    private UploadError error;
 }

@@ -1,23 +1,30 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: Zahlungsdaten-API
   version: 1.1.1
   description: |
-    Zahlungsdaten Upload-API und optionalem Batching.
-    - **POST /upload: Neuen Upload anlegen
-    - **PUT /upload/{uploadId}/items: Batch-Upload (mehrere Items zu einer VSL)
-    - **GET /upload/{uploadId}: Fortschritt & Diagnose eines Uploads
-    - **GET /upload: Fortschritt & Diagnose aller Uploads
+    Zahlungsdaten Upload-API mit optionalem Batching.
 
+    **Endpoints**
+    - **POST /upload**: Neuen Upload anlegen
+    - **PUT /upload/{uploadId}/items**: Batch-Upload (mehrere Items zu einer VSL)
+    - **GET /upload/{uploadId}**: Fortschritt & Diagnose eines Uploads
+    - **GET /upload**: Fortschritt & Diagnose aller Uploads
 tags:
   - name: upload
-    description: Uploads & Items
+    description: Upload-Initialisierung, Batch-Übertragung und Statusabfragen
 
 paths:
   /zahlungsdaten-api/v1/upload:
     post:
-      tags: [ upload ]
-      summary: Neuen Upload initiieren – erzeugt eine neue serverseitige Upload-Session. Pro Upload können n Datensätze zu genau einer VSL-Nummer übertragen werden. Beim Start erfolgt die Berechtigungsprüfung des Bewirtschafters für den angegebenen Verarbeitungsschlüssel (VSL). Der Upload wird automatisch abgeschlossen, sobald alle übermittelten Zahlungsdatensätze erfolgreich verarbeitet wurden.
+      tags: [upload]
+      summary: Neuen Upload initiieren – erzeugt eine neue serverseitige Upload-Session.
+      description: >
+        Pro Upload können n Datensätze zu genau einer VSL-Nummer übertragen werden.
+        Beim Start erfolgt die Berechtigungsprüfung des Bewirtschafters für den
+        angegebenen Verarbeitungsschlüssel (VSL). Der Upload wird automatisch
+        abgeschlossen, sobald alle übermittelten Zahlungsdatensätze erfolgreich
+        verarbeitet wurden.
       operationId: initUpload
       requestBody:
         required: true
@@ -40,7 +47,7 @@ paths:
               description: Resource-URI des Uploads
               schema:
                 type: string
-                example: /uploads/3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f
+                example: /zahlungsdaten-api/v1/upload/3f7a2c5e-2a8b-4b6a-9f2d-1a2b3c4d5e6f
           content:
             application/json:
               schema:
@@ -49,10 +56,11 @@ paths:
           description: Ungültiger Init-Body
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
     get:
-      tags: [ upload ]
-      summary: Status einsehen – Fortschritt- & Diagnosedaten zu allen Uploads
+      tags: [upload]
+      summary: Status einsehen – Fortschritt & Diagnosedaten zu allen Uploads
       operationId: getAllUploadsStatus
       responses:
         '200':
@@ -74,8 +82,8 @@ paths:
                         processing: 0
                         done: 0
                         error: 0
-                        missingSequence: [ 3 ]
-                        errorSequence: [ ]
+                        missingSequence: [3]
+                        errorSequence: []
                       - uploadId: "22222222-2222-2222-2222-222222222222"
                         uploadStatus: "SEALED"
                         expected: 5
@@ -84,20 +92,26 @@ paths:
                         processing: 0
                         done: 5
                         error: 0
-                        missingSequence: [ ]
-                        errorSequence: [ ]
+                        missingSequence: []
+                        errorSequence: []
 
   /zahlungsdaten-api/v1/upload/{uploadId}/items:
     put:
-      tags: [ upload ]
-      summary: Upload von n Zahlungsdatensätzen für die angegebene uploadId – Die VSL-Datensätze (Items) werden in Batches von 1 bis n pro Request übertragen. Jedes Item enthält eine fortlaufende Nummer (seqNo) sowie den zugehörigen VSL-Payload. Fehlerhafte Items können bei Bedarf erneut hochgeladen werden.
+      tags: [upload]
+      summary: Upload von n Zahlungsdatensätzen für die angegebene uploadId
+      description: >
+        Die VSL-Datensätze (Items) werden in Batches von 1 bis n pro Request
+        übertragen. Jedes Item enthält eine fortlaufende Nummer (seqNo) sowie
+        den zugehörigen VSL-Payload. Fehlerhafte Items können bei Bedarf erneut
+        hochgeladen werden.
       operationId: uploadBatch
       parameters:
         - name: uploadId
           in: path
           required: true
           description: ID des Uploads (UUID)
-          schema: { type: string }
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -123,33 +137,38 @@ paths:
           description: Ungültiger Batch (z. B. leer, zu groß, seqNo out of range)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           description: Unbekannte uploadId
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
         '409':
           description: Konflikt (Upload-Zustand oder Item-Konflikt auf Gesamtebene)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
         '410':
-          description: Upload Gültigkeitszeitraum abgelaufen (expired)
+          description: Upload-Gültigkeitszeitraum abgelaufen (expired)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /zahlungsdaten-api/v1/upload/{uploadId}:
     get:
-      tags: [ upload ]
-      summary: Status einsehen – Fortschritt- & Diagnosedaten zu einem Upload
+      tags: [upload]
+      summary: Status einsehen – Fortschritt & Diagnosedaten zu einem Upload
       operationId: getUploadStatus
       parameters:
         - name: uploadId
           in: path
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
         '200':
           description: Status des Uploads
@@ -168,19 +187,20 @@ paths:
                     processing: 0
                     done: 3
                     error: 0
-                    missingSequence: [ ]
-                    errorSequence: [ ]
+                    missingSequence: []
+                    errorSequence: []
         '404':
           description: Unbekannte uploadId
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   schemas:
     UploadInitRequest:
       type: object
-      required: [ bewNr, vslNummer, anzahlDatensaetzeInsgesamt ]
+      required: [bewNr, vslNummer, anzahlDatensaetzeInsgesamt]
       properties:
         bewNr:
           type: string
@@ -204,7 +224,7 @@ components:
 
     UploadInitResponse:
       type: object
-      required: [ uploadId, status, createdAt, expiresAt, vslNummer, expected ]
+      required: [uploadId, status, createdAt, expiresAt, vslNummer, expected]
       properties:
         uploadId:
           type: string
@@ -215,11 +235,11 @@ components:
         createdAt:
           type: string
           format: date-time
-          example: "2025-09-03T14:00:00"
+          example: "2025-09-03T14:00:00Z"
         expiresAt:
           type: string
           format: date-time
-          example: "2025-09-03T16:00:00"
+          example: "2025-09-03T16:00:00Z"
         vslNummer:
           type: string
           example: "vsl00001"
@@ -229,7 +249,7 @@ components:
 
     ItemUploadRequest:
       type: object
-      required: [ seqNo, payload ]
+      required: [seqNo, payload]
       properties:
         seqNo:
           type: integer
@@ -250,11 +270,11 @@ components:
 
     BatchUploadResultStatus:
       type: string
-      enum: [ ACCEPTED, REUPLOADED, CONFLICT, INVALID ]
+      enum: [ACCEPTED, REUPLOADED, CONFLICT, INVALID]
 
     BatchUploadResult:
       type: object
-      required: [ seqNo, status ]
+      required: [seqNo, status]
       properties:
         seqNo:
           type: integer
@@ -268,7 +288,7 @@ components:
 
     BatchUploadResponse:
       type: object
-      required: [ uploadId, results ]
+      required: [uploadId, results]
       properties:
         uploadId:
           type: string
@@ -281,7 +301,7 @@ components:
     UploadStatusResponse:
       type: object
       required:
-        [ uploadId, uploadStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence ]
+        [uploadId, uploadStatus, expected, received, pending, processing, done, error, missingSequence, errorSequence]
       properties:
         uploadId:
           type: string
@@ -311,17 +331,20 @@ components:
         missingSequence:
           type: array
           description: Laufende Nummern (1..expected), zu denen **kein** Item existiert
-          items: { type: integer }
-          example: [ ]
+          items:
+            type: integer
+          example: []
         errorSequence:
           type: array
           description: Laufende Nummern von Items im Status **ERROR**
-          items: { type: integer }
-          example: [ ]
+          items:
+            type: integer
+          example: []
 
     UploadStatusListResponse:
       type: object
-      description: Aggregierter Status über alle (optionalen Filter entsprechend) Uploads.
+      description: Aggregierter Status über alle Uploads.
+      required: [total, items]
       properties:
         total:
           type: integer
@@ -332,11 +355,10 @@ components:
           description: Liste der Upload-Statusobjekte
           items:
             $ref: '#/components/schemas/UploadStatusResponse'
-      required: [ total, items ]
 
     UploadSessionStatus:
       type: string
-      enum: [ ACTIVE, SEALED, COMPLETED, ABORTED ]
+      enum: [ACTIVE, SEALED, COMPLETED, ABORTED]
 
     Error:
       type: object

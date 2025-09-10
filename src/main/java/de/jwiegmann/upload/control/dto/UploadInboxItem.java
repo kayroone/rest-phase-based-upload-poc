@@ -16,7 +16,7 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class InboxItem {
+public class UploadInboxItem {
 
     private String uploadId;
     private int seqNo;                // laufende Nummer 1..expectedCount

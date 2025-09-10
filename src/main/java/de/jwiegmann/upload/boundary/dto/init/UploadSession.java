@@ -1,4 +1,4 @@
-package de.jwiegmann.upload.boundary.dto;
+package de.jwiegmann.upload.boundary.dto.init;
 
 import de.jwiegmann.upload.boundary.dto.status.UploadSessionStatus;
 import lombok.AllArgsConstructor;
@@ -12,11 +12,19 @@ import java.time.LocalDateTime;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-public class UploadInitResponse {
+public class UploadSession {
+
     private String uploadId;
-    private UploadSessionStatus status;
+    private UploadSessionStatus status;   // ACTIVE | SEALED | COMPLETED | ABORTED
+
     private LocalDateTime createdAt;
     private LocalDateTime expiresAt;
+
+    // Metadaten (eine VSL pro Session)
+    private String bewNr;
     private String vslNummer;
-    private int expected;
+
+    // Fortschritt
+    private int expectedCount;   // Anzahl der Datensaetze insgesamt
+    private int receivedCount;   // Anzahl bereits angenommener Items
 }
