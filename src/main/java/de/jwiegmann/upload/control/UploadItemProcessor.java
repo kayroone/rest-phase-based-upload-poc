@@ -13,12 +13,24 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
+/**
+ * Verarbeitet Upload-Items basierend auf ihrem aktuellen Status und Session-Zustand.
+ * Implementiert die Geschäftslogik für Idempotenz und Re-Upload-Verhalten.
+ */
 @Component
 @RequiredArgsConstructor
 public class UploadItemProcessor {
 
     private final InMemoryUploadInboxItemRepository inboxItemRepository;
 
+    /**
+     * Verarbeitet ein bereits existierendes Item basierend auf seinem aktuellen Status.
+     *
+     * @param existing Das bereits vorhandene Item aus der Inbox
+     * @param item Das neue Upload-Request Item
+     * @param now Aktueller Zeitstempel
+     * @return BatchUploadResult mit entsprechendem Status (REUPLOADED/CONFLICT)
+     */
     public BatchUploadResult processExistingItem(UploadInboxItem existing, ItemUploadRequest item, LocalDateTime now) {
 
         int seqNo = item.getSeqNo();
@@ -44,6 +56,14 @@ public class UploadItemProcessor {
         };
     }
 
+    /**
+     * Erstellt ein neues Item in der Inbox.
+     *
+     * @param session Die Upload-Session
+     * @param item Das Upload-Request Item
+     * @param now Aktueller Zeitstempel
+     * @return BatchUploadResult mit Status ACCEPTED oder CONFLICT bei Race-Conditions
+     */
     public BatchUploadResult processNewItem(UploadSession session, ItemUploadRequest item, LocalDateTime now) {
         int seqNo = item.getSeqNo();
 
@@ -71,6 +91,16 @@ public class UploadItemProcessor {
         }
     }
 
+    /**
+     * Verarbeitet Item-Uploads in einer bereits versiegelten (SEALED) Session.
+     * Erlaubt nur Re-Uploads von Items im ERROR-Status.
+     *
+     * @param item Das Upload-Request Item
+     * @param existingItem Optional vorhandenes Item
+     * @param uploadId Die Upload-ID für Error-Messages
+     * @param now Aktueller Zeitstempel
+     * @return BatchUploadResult mit Status REUPLOADED oder CONFLICT
+     */
     public BatchUploadResult processItemInSealedSession(ItemUploadRequest item, Optional<UploadInboxItem> existingItem, String uploadId, LocalDateTime now) {
         int seqNo = item.getSeqNo();
 

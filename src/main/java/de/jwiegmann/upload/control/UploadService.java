@@ -18,28 +18,35 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 
+/**
+ * Hauptservice für das phasenbasierte Upload-System mit Inbox Pattern.
+ * Orchestriert die Upload-Session-Verwaltung und Item-Verarbeitung.
+ */
 @Service
 public class UploadService {
 
     private final InMemoryUploadSessionRepository uploadSessionRepository;
     private final InMemoryUploadInboxItemRepository inboxItemRepository;
-    private final UploadSessionPolicyHandler sessionPolicyHandler;
     private final UploadItemProcessor uploadItemProcessor;
     private final UploadSessionManager uploadSessionManager;
 
     public UploadService(InMemoryUploadSessionRepository uploadSessionRepository,
                          InMemoryUploadInboxItemRepository inboxItemRepository,
-                         UploadSessionPolicyHandler sessionPolicyHandler, UploadItemProcessor uploadItemProcessor,
+                         UploadItemProcessor uploadItemProcessor,
                          UploadSessionManager uploadSessionManager) {
         this.uploadSessionRepository = uploadSessionRepository;
         this.inboxItemRepository = inboxItemRepository;
-        this.sessionPolicyHandler = sessionPolicyHandler;
         this.uploadItemProcessor = uploadItemProcessor;
         this.uploadSessionManager = uploadSessionManager;
     }
 
     /**
-     * InitUpload: legt eine Session für genau eine VSL an.
+     * Initialisiert eine neue Upload-Session für eine VSL-Nummer.
+     * Erstellt eine eindeutige uploadId und setzt Expiry-Zeit.
+     *
+     * @param req Upload-Initialisierungs-Request mit VSL-Daten
+     * @return Neue Upload-Session im ACTIVE Status
+     * @throws ResponseStatusException bei ungültigen Request-Daten
      */
     public UploadSession initUpload(final UploadInitRequest req) {
 
@@ -70,6 +77,15 @@ public class UploadService {
         return uploadSessionRepository.save(s);
     }
 
+    /**
+     * Verarbeitet einen Batch von Upload-Items für eine bestehende Session.
+     * Führt Validierungen durch und verarbeitet Items einzeln mit granularer Fehlerbehandlung.
+     *
+     * @param uploadId ID der Upload-Session
+     * @param batch    Liste der zu verarbeitenden Items
+     * @return BatchUploadResponse mit Ergebnis pro Item (ACCEPTED/INVALID/CONFLICT/REUPLOADED)
+     * @throws ResponseStatusException wenn uploadId nicht existiert
+     */
     public BatchUploadResponse uploadBatch(String uploadId, List<ItemUploadRequest> batch) {
 
         UploadSession session = uploadSessionRepository.find(uploadId)
@@ -144,6 +160,13 @@ public class UploadService {
                 .build();
     }
 
+    /**
+     * Liefert detaillierten Status einer Upload-Session inkl. Fortschritt und Diagnose-Daten.
+     *
+     * @param uploadId ID der Upload-Session
+     * @return UploadStatusResponse mit Statistiken und fehlenden/fehlerhaften Sequenzen
+     * @throws ResponseStatusException wenn uploadId nicht existiert
+     */
     public UploadStatusResponse getStatus(String uploadId) {
         UploadSession s = uploadSessionRepository.find(uploadId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "uploadId not found"));
@@ -151,7 +174,11 @@ public class UploadService {
         return buildStatusResponse(s, items);
     }
 
-
+    /**
+     * Liefert Übersicht über alle Upload-Sessions mit ihren Status-Informationen.
+     *
+     * @return UploadStatusListResponse mit Liste aller Upload-Sessions und deren Fortschritt
+     */
     public UploadStatusListResponse getAllStatus() {
 
         List<UploadSession> sessions = uploadSessionRepository.findAll();
@@ -165,6 +192,10 @@ public class UploadService {
                 .build();
     }
 
+    /**
+     * Erstellt Status-Response mit Statistiken aus Session und Items.
+     * Berechnet pending/processing/done/error Counts und identifiziert fehlende Sequenzen.
+     */
     private UploadStatusResponse buildStatusResponse(UploadSession s, List<UploadInboxItem> items) {
         int expected = s.getExpectedCount();
         int received = items.size();
@@ -200,6 +231,10 @@ public class UploadService {
                 .build();
     }
 
+    /**
+     * Verarbeitet ein einzelnes Item unter Berücksichtigung von Session-Status und vorhandenen Items.
+     * Delegiert an entsprechende Processor-Methoden basierend auf Session-Zustand.
+     */
     private BatchUploadResult processSingleItem(UploadSession session,
                                                 ItemUploadRequest item,
                                                 LocalDateTime now) {
@@ -207,7 +242,7 @@ public class UploadService {
         int seqNo = item.getSeqNo();
 
         // 1. Session Policy prüfen
-        BatchUploadResult policyResult = sessionPolicyHandler.validateSessionPolicy(session, seqNo);
+        BatchUploadResult policyResult = uploadSessionManager.validateSessionPolicy(session, seqNo);
         if (policyResult != null) {
             return policyResult;
         }
